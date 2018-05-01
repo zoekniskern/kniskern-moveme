@@ -1,10 +1,13 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>Simple Map</title>
+    <title>Move Me</title>
     <meta name="viewport" content="initial-scale=1.0">
     <meta charset="utf-8">
+    <!-- Import jQuery -->
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.1.0/jquery.min.js"></script>  
     <style>
+      @import url('https://fonts.googleapis.com/css?family=Nunito:300,400,700');
       /* Always set the map height explicitly to define the size of the div
        * element that contains the map. */
       #map {
@@ -15,37 +18,202 @@
         height: 100%;
         margin: 0;
         padding: 0;
+        font-family: 'Nunito', sans-serif;
+      }
+      .pac-card {
+        margin: 10px 10px 0 0;
+        border-radius: 2px 0 0 2px;
+        box-sizing: border-box;
+        -moz-box-sizing: border-box;
+        outline: none;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+        background-color: #fff;
+        font-family: Roboto;
+        position: absolute;
+        z-index: 1000;  
+      }
+
+      #pac-container {
+        padding-bottom: 12px;
+        padding-top: 12px;
+        margin-right: 12px;
+      }
+
+      .pac-controls {
+        display: inline-block;
+        padding: 5px 11px;
+      }
+
+      .pac-controls label {
+        font-family: Roboto;
+        font-size: 13px;
+        font-weight: 300; 
+      }
+
+      #pac-input {
+        background-color: #fff;
+        font-family: Roboto;
+        font-size: 15px;
+        font-weight: 300;
+        margin-left: 6px;
+        padding: 0 11px 0 13px;
+        text-overflow: ellipsis;
+        width: 400px;
+      }
+
+      #pac-input:focus {
+        border-color: #4d90fe;
+      }
+
+      #title {
+        color: #fff;
+        background-color: #521537;
+        font-size: 2em;
+        font-weight: bold;
+        font-weight: 500;
+        padding: 6px 6px;
+      }
+        
+      #subtitle {
+        font-size: 1em; 
+        padding: 6px 6px;
+        color: #fff;
+        background-color: #521537;
+      }
+        
+      #save{
+        margin-left: 6px; 
       }
     </style>
   </head>
   <body>
+    <div class="pac-card" id="pac-card">
+      <div>
+        <div id="title">
+            MoveMe
+        </div>
+        <div id="subtitle">
+          Add a Memorable Place
+        </div>
+      </div>
+      <div id="pac-container">
+        <input id="pac-input" type="text"
+            placeholder="Enter a location">
+        <input id="submit" type="button" value="Add to My Places"> <br>
+        <input id="save" type="button" value="Save All Places"> <input id="clear" type="button" value="Clear My Places">
+        <input id="load" type="button" value="Load My Places">  
+      </div>
+    </div>  
     <div id="map"></div>
     <script>
       var map;
-      var infowindow;
+      var infoWindow;
+      var geocoder;
+      var autocomplete;
+      var bounds;
+      var place;    
       var markers = [];
       var polygons = [];
       var baseUrl = 'http://localhost:3000';
-      var coffeeUrl = '/coffee.json';
-      var buildingUrl = '/building.json';
       var myLocations = [];
       var numLocs = 0;
+      var radius;
+      var fillColor;
         
+      var weatherUrl = 'http://api.openweathermap.org/data/2.5/weather?';
+      var weatherKey = '&APPID=9ff11746a5755e10239d3ca14e2e5045';
+    
+      //init map function
       function initMap() {  
           
         var mapOptions = {
             center: {lat:43.083848, lng:-77.6799},
-            zoom: 16,
+            zoom: 7,
             mapTypeId: google.maps.MapTypeId.ROADMAP
         };
           
         map = new google.maps.Map(document.getElementById('map'), mapOptions);
           
+        var card = document.getElementById('pac-card');
+        var input = document.getElementById('pac-input');
+        var types = document.getElementById('type-selector');  
+          
         infowindow = new google.maps.InfoWindow;
+        geocoder = new google.maps.Geocoder();  
+        autocomplete = new google.maps.places.Autocomplete(input); 
+        bounds = new google.maps.LatLngBounds();  
+          
+        autocomplete.bindTo('bounds', map);  
           
         //45-degree
         map.mapTypeId = 'satellite';
         map.setTilt(45);
+        
+        /*
+        if (localStorage.getItem('myPlaces')) {
+            //myPlaces = JSON.parse(localStorage.getItem('items'));
+        } else {
+            myPlaces = [];
+        }
+        */
+          
+        //handle search click
+        document.getElementById('submit').addEventListener('click', function(){
+            savePlace();
+        });
+          
+        document.getElementById('save').addEventListener('click', function(){
+            localStorage.setItem('myPlaces', myLocations);
+        });
+          
+        document.getElementById('clear').addEventListener('click', function(){
+            localStorage.removeItem('myPlaces');
+            numLocs = 0;
+            myLocations = [];
+            clearOverlays();
+            console.log('Clear ran');
+        });
+          
+        document.getElementById('load').addEventListener('click', function(){
+            localStorage.getItem('myPlaces');
+        });  
+          
+        var marker = new google.maps.Marker({
+          map: map,
+          anchorPoint: new google.maps.Point(0, -29)
+        });  
+        
+        //handles autocomplete box 
+        autocomplete.addListener('place_changed', function() {
+          marker.setVisible(false);
+          place = autocomplete.getPlace();
+          if (!place.geometry) {
+            // User entered the name of a Place that was not suggested and
+            // pressed the Enter key, or the Place Details request failed.
+            window.alert("No details available for input: '" + place.name + "'");
+            return;
+          }
+
+          // If the place has a geometry, then present it on a map.
+          if (place.geometry.viewport) {
+            map.fitBounds(place.geometry.viewport);
+          } else {
+            map.setCenter(place.geometry.location);
+            map.setZoom(5);  // Why 17? Because it looks good.
+          }
+          marker.setPosition(place.geometry.location);
+          marker.setVisible(true);
+
+          var address = '';
+          if (place.address_components) {
+            address = [
+              (place.address_components[0] && place.address_components[0].short_name || ''),
+              (place.address_components[1] && place.address_components[1].short_name || ''),
+              (place.address_components[2] && place.address_components[2].short_name || '')
+            ].join(' ');
+          }
+        });
+  
           
         //geolocation test
         if(navigator.geolocation) {
@@ -56,19 +224,20 @@
                     title: 'test'
                 };
                 
-               //addMarker(pos.lat, pos.lng, "me");
-               //infowindow.setPosition(pos);
-               //infowindow.setContent('location?');
-               //infowindow.open(map);
                map.setCenter(pos);
                 
                myLocations[numLocs]=pos;
                numLocs ++;
-                
+            
+               /*
                myLocations[numLocs]=pos2 = {
                    lat:43.083848, lng:-77.6799,
                    title: 'test'
                }
+               
+               console.log("geolocation running");
+               numLocs ++;
+               */
                 
                showLocations(myLocations);      
             }, function() {
@@ -82,53 +251,286 @@
         
         console.dir(myLocations);
         
-        
+        function savePlace(){
+            var newPos = {
+                lat: place.geometry.location.lat(),
+                lng: place.geometry.location.lng(),
+                title: input.value
+            };
+            myLocations[numLocs]=newPos;
+            numLocs ++;
+            
+            console.log(numLocs);
+            
+            showLocations(myLocations);
+        }
           
         function showLocations(array){
            for(var i=0; i<myLocations.length;i++){
                var lat = myLocations[i].lat;
                var long = myLocations[i].lng;
                var title = myLocations[i].title;
-               addMarker(lat,long,title);
-               console.dir("I ran");
-               console.dir(myLocations[i]);
-            }    
-        }
-          
-        function polyCoords(array){
-           for(var i=0; i<myLocations.length;i++){
                
-           }
+               addMarker(lat,long,title);
+               console.dir("show Locations ran");
+            }
+            
+            for(var i=0; i<markers.length;i++){
+                bounds.extend(markers[i].getPosition());
+            }
 
-        }  
-        
-          
-        //handling errors
-        function handleLocationError(browserHasGeolocation, infowindow, pos) {
-            infowindow.setPosition(pos);
-           infoWindow.setContent(browserHasGeolocation ?
-                              'Error: The Geolocation service failed.' :
-                              'Error: Your browser doesn\'t support geolocation.');
-            infowindow.open(map);                      
-        }  
+            map.fitBounds(bounds);
             
-        //adding a Marker
-        function addMarker(latitude, longitude, title) {
-            var position = {lat:latitude, lng: longitude};
-            var marker = new google.maps.Marker({position: position, map: map});
-            marker.setTitle(title); 
-            markers.push(marker);
+            polyCoords(myLocations);
             
-            //event listener for click event
-            google.maps.event.addListener(marker, 'click', function(e){
-                makeInfoWindow(this.position, this.title);
-            });
+            console.dir(myLocations);
+            console.dir(polygons);
+            console.dir(testCoords);
+            
+            myShape.setMap(map);
+            triangle.setMap(map);
+            testShape.setMap(map);            
+            
+            console.log("set map is above this print line");
+            
+            
+            for(var i=0; i<myLocations.length;i++){
+                var url = weatherUrl;
+                url += "lat=" + myLocations[i].lat;
+                url += '&';
+                url += "lon=" + myLocations[i].lng;
+                url += weatherKey;
+                console.dir(url);
+                
+                //var weath = $.getJSON(url);
+                
+                $.ajax({
+                    dataType: 'jsonp',
+                    url: url,
+                    data: null,
+                    success: jsonLoaded
+                });
+                
+                //console.dir(weath)
+                //radius = weath.responseText.main.temp * 1000;
+            }
+            
+            for(var i=0; i<polygons.length;i++){
+            // Add the circle for this city to the map.
+                var cityCircle = new google.maps.Circle({
+                  strokeColor: '#500505',
+                  strokeOpacity: 0.8,
+                  strokeWeight: 2,
+                  fillColor: fillColor,
+                  fillOpacity: 0.35,
+                  map: map,
+                  center: polygons[i],
+                  radius: radius
+                  
+                }); 
+                console.log('circle ran');
+            }
         }
+        
+        // Define the LatLng coordinates for the polygon.  
+        function polyCoords(array){
+           for(var i=0; i<array.length;i++){
+               var polyP = {
+                  lat: array[i].lat,
+                  lng: array[i].lng
+               };
+               polygons[i] = polyP;
+           }
+        }
+          
+        var testCoords = [
+            {lat:43.083848, lng:-77.6799},
+            {lat:43.083848, lng:-77.6799},
+            {lat: 25.774, lng: -80.190},
+            {lat: 38.774, lng: -20.190},
+            {lat: 15.354, lng: -40.230}
+        ];
+          
+        var triangleCoords = [
+            {lat: 25.774, lng: -80.190},
+            {lat: 18.466, lng: -66.118},
+            {lat: 32.321, lng: -64.757}
+        ];  
+          
+        // Construct the polygon.
+        var myShape = new google.maps.Polygon({
+          paths: testCoords,
+          strokeColor: '#FF0000',
+          strokeOpacity: 0.8,
+          strokeWeight: 3,
+          fillColor: '#FF0000',
+          fillOpacity: 0.35
+        });
+          
+        var triangle = new google.maps.Polygon({
+          paths: triangleCoords,
+          strokeColor: '#104e8b',
+          strokeOpacity: 0.8,
+          strokeWeight: 3,
+          fillColor: '#55aadd',
+          fillOpacity: 0.35
+        });  
+          
+        var testShape = new google.maps.Polygon({
+          paths: myLocations,
+          strokeColor: '#000000',
+          strokeOpacity: 0.8,
+          strokeWeight: 3,
+          fillColor: '#FF0000',
+          fillOpacity: 0.35
+        }); 
+          
+        /*  
+        var testShape = new google.maps.Polygon({
+          paths: polygons,
+          strokeColor: '#000000',
+          strokeOpacity: 0.8,
+          strokeWeight: 3,
+          fillColor: '#FF0000',
+          fillOpacity: 0.35
+        });  
+        */
+          
 
-      }
+        // Add a listener for the click event.
+        myShape.addListener('click', showArrays);
+
+        infoWindow = new google.maps.InfoWindow;
+          
+        /** @this {google.maps.Polygon} */
+        function showArrays(event) {
+          // Since this polygon has only one path, we can call getPath() to return the
+          // MVCArray of LatLngs.
+          var vertices = this.getPath();
+    
+          var contentString = '<b>Places That Matter to Me</b><br>' +
+              'Clicked location: <br>' + event.latLng.lat() + ',' + event.latLng.lng() +
+              '<br>';
+    
+          // Iterate over the vertices.
+          for (var i =0; i < myLocations.length; i++) {
+            var xy = myLocations[i];
+            contentString += '<br>' + 'Coordinate ' + xy.title + ':<br>' + xy.lat + ',' +
+                xy.lng;
+          }
+            
+          // Replace the info window's content and position.
+          infoWindow.setContent(contentString);
+          infoWindow.setPosition(event.latLng);
+  
+          infoWindow.open(map);  
+        }
+          
+        //circle code
+          /*
+        for (var point in testCoords) {
+            // Add the circle for this city to the map.
+            var cityCircle = new google.maps.Circle({
+              strokeColor: '#500505',
+              strokeOpacity: 0.8,
+              strokeWeight: 2,
+              fillColor: '#c4b9c7',
+              fillOpacity: 0.35,
+              map: map,
+              center: testCoords[point].center,
+              radius: 5
+              
+            }); 
+            console.log('circle ran');
+        }
+        */
+
+          
+      }//end of init
+
+    //related to Map still   
+    //handling errors
+    function handleLocationError(browserHasGeolocation, infowindow, pos) {
+        infowindow.setPosition(pos);
+       infoWindow.setContent(browserHasGeolocation ?
+                          'Error: The Geolocation service failed.' :
+                          'Error: Your browser doesn\'t support geolocation.');
+        infowindow.open(map);                      
+    }  
+        
+    //adding a Marker
+    function addMarker(latitude, longitude, title) {
+        var position = {lat:latitude, lng: longitude};
+        var marker = new google.maps.Marker({position: position, map: map});
+        marker.setTitle(title); 
+        markers.push(marker);
+        
+        //event listener for click event
+        google.maps.event.addListener(marker, 'click', function(e){
+            makeInfoWindow(this.position, this.title);
+        });
+    }
+        
+    function clearOverlays() {
+        for (var i = 0; i < markers.length; i++ ) {
+            markers[i].setMap(null);
+        }
+        markers.length = 0;
+    }    
+        
+    //weather api
+    /*
+    for(var i=0; i<myLocations.length;i++){
+        var url = weatherUrl;
+        url += "lat=" + toString(myLocations[i].lat);
+        url += '&';
+        url += "lon=" + toString(myLocations[i].lng);
+        url += weatherKey;
+        console.log(url);
+        console.log("INSIDE LOCATIONS LOOP");
+    }
+    */   
+        
+    var forecast = $.getJSON('http://api.openweathermap.org/data/2.5/weather?lat=43.1222716&lon=-77.57340479999999&APPID=9ff11746a5755e10239d3ca14e2e5045');
+    console.log('forecast object: ');
+    console.dir(forecast);    
+
+    
+	function jsonLoaded(obj){
+		console.log("obj = " +obj);
+		console.log("obj stringified = " + JSON.stringify(obj));
+		
+		// if there's an error, print a message and return
+		if(obj.error){
+			var status = obj.status;
+			var description = obj.description;
+			document.querySelector("#dynamicContent").innerHTML = "<h3><b>Error!</b></h3>" + "<p><i>" + status + "</i><p>" + "<p><i>" + description + "</i><p>";
+			$("#dynamicContent").fadeIn(500);
+			return; // Bail out
+		}
+		
+		// if there are no results, print a message and return
+		if(obj.total_items == 0){
+			var status = "No results found";
+			document.querySelector("#dynamicContent").innerHTML = "<p><i>" + status + "</i><p>" + "<p><i>";
+			$("#dynamicContent").fadeIn(500);
+			return; // Bail out
+		}
+        
+        radius = obj.main.temp*1000;
+        if(obj.main.humidity < 50){
+            fillColor = '#6897bb';
+        } else{
+            fillColor = '#ff0033';
+        }
+    } 
+        
+    //resources
+    //https://developers.google.com/maps/documentation/javascript/examples/places-autocomplete
+    
     </script>
     <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCDO6gxo9KM_hzLFoQgZa-WXmNaKap3zsY&callback=initMap"
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAVGv4R6n4gL8XrqQacNc7zif1OyDDMYvU&libraries=places&callback=initMap">
     async defer></script>
   </body>
 </html>
